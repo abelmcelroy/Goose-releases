@@ -18,6 +18,7 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
         run: until gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qx goose-update.json; do sleep 60; done
       - env:
-          GH_TOKEN: ${{ secrets.SITE_TOKEN }}
-          SITE: ${{ github.repository_owner }}/Goose-website
-        run: gh workflow run site.yml --repo "$SITE"
+          HOOK: ${{ secrets.SITE_DEPLOY_HOOK }}
+        run: |
+          [ -n "$HOOK" ] || { echo "The secret SITE_DEPLOY_HOOK is missing, so the site wasn't rebuilt: add it as Goose-website's README says." >&2; exit 1; }
+          curl -fsS -X POST "$HOOK"
