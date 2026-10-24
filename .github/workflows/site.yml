@@ -24,10 +24,29 @@ jobs:
           PROJECT: prj_vSOdTOt3Ce16ogZVqycRvrfcnOmb
         run: |
           [ -n "$VERCEL_TOKEN" ] || { echo "The secret VERCEL_TOKEN is missing, so the site wasn't rebuilt: add it as Goose-website's README says." >&2; exit 1; }
+          api() { curl -sS --max-time 60 -H "Authorization: Bearer $VERCEL_TOKEN" "$@"; }
           body=$(jq -cn --arg project "$PROJECT" '{name: "goose-website", project: $project, target: "production", gitSource: {type: "github", org: "abelmcelroy", repo: "Goose-website", ref: "main"}}')
-          answer=$(curl -sS --fail-with-body -X POST "https://api.vercel.com/v13/deployments?teamId=$TEAM&forceNew=1" -H "Authorization: Bearer $VERCEL_TOKEN" -H "Content-Type: application/json" -d "$body") \
+          answer=$(api --fail-with-body -X POST "https://api.vercel.com/v13/deployments?teamId=$TEAM&forceNew=1" -H "Content-Type: application/json" -d "$body") \
             || { echo "Vercel refused to build the site: $answer. If VERCEL_TOKEN has expired, replace it as Goose-website's README says." >&2; exit 1; }
-          id=$(jq -r .id <<<"$answer")
-          until state=$(curl -sS --fail-with-body "https://api.vercel.com/v13/deployments/$id?teamId=$TEAM" -H "Authorization: Bearer $VERCEL_TOKEN" | jq -r .readyState) && [[ $state =~ ^(READY|ERROR|CANCELED|BLOCKED)$ ]]; do sleep 10; done
-          [ "$state" = READY ] || { echo "Vercel's build of the site ended $state, so the site already live stays as it is: https://vercel.com/abelmcelroys-projects/goose-website/${id#dpl_}" >&2; exit 1; }
-          echo "The site is live from Vercel's build $id."
+          id=$(jq -r .id <<<"$answer" 2>/dev/null) && [[ $id =~ ^dpl_[[:alnum:]]+$ ]] \
+            || { echo "Vercel took the request to build the site but named no build, so this run can't tell whether the site went live: $answer" >&2; exit 1; }
+          build=https://vercel.com/abelmcelroys-projects/goose-website/${id#dpl_}
+          for _ in {1..120}; do
+            sleep 10
+            deployment=$(api --fail --retry 3 "https://api.vercel.com/v13/deployments/$id?teamId=$TEAM") \
+              || { echo "Vercel stopped answering about its build of the site. If VERCEL_TOKEN has expired, replace it as Goose-website's README says. $build" >&2; exit 1; }
+            state=$(jq -r '"\(.readyState) \(.readySubstate)"' <<<"$deployment")
+            case $state in
+              "READY PROMOTED") echo "The site is live from Vercel's build $id."; exit 0 ;;
+              READY*)
+                project=$(api --fail --retry 3 "https://api.vercel.com/v9/projects/$PROJECT?teamId=$TEAM") \
+                  || { echo "Vercel built the site but wouldn't say whether it put the build live. If VERCEL_TOKEN has expired, replace it as Goose-website's README says. $build" >&2; exit 1; }
+                if jq -e '.autoAssignCustomDomains == false' <<<"$project" >/dev/null; then
+                  echo "Vercel built the site, but a rollback holds goose-website's production, so the site already live stays as it is. To undo the rollback and put this build live, choose Undo Rollback on https://vercel.com/abelmcelroys-projects/goose-website, choose this build and confirm: $build" >&2
+                  exit 1
+                fi ;;
+              ERROR*|CANCELED*|BLOCKED*) echo "Vercel's build of the site ended ${state% *}, so the site already live stays as it is: $build" >&2; exit 1 ;;
+            esac
+          done
+          echo "Vercel's build of the site wasn't live 20 minutes after this run asked for it, so the run stopped waiting: $build" >&2
+          exit 1
