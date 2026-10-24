@@ -2,12 +2,13 @@ name: Site
 
 on:
   release:
-    types: [published, unpublished, deleted]
+    types: [published, edited, unpublished, deleted]
 
 permissions: {}
 
 jobs:
   site:
+    if: github.event.action != 'edited' || (!github.event.release.draft && contains(github.event.release.assets.*.name, 'goose-update.json'))
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     permissions: {contents: read}
