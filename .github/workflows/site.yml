@@ -9,16 +9,25 @@ permissions: {}
 jobs:
   site:
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 390
     permissions: {contents: read}
     steps:
       - if: github.event.action == 'published'
+        timeout-minutes: 360
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
         run: until gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qx goose-update.json; do sleep 60; done
       - env:
-          HOOK: ${{ secrets.SITE_DEPLOY_HOOK }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          TEAM: team_5Ez2qXd5BAcFRTZroIUtreHC
+          PROJECT: prj_vSOdTOt3Ce16ogZVqycRvrfcnOmb
         run: |
-          [ -n "$HOOK" ] || { echo "The secret SITE_DEPLOY_HOOK is missing, so the site wasn't rebuilt: add it as Goose-website's README says." >&2; exit 1; }
-          curl -fsS -X POST "$HOOK"
+          [ -n "$VERCEL_TOKEN" ] || { echo "The secret VERCEL_TOKEN is missing, so the site wasn't rebuilt: add it as Goose-website's README says." >&2; exit 1; }
+          body=$(jq -cn --arg project "$PROJECT" '{name: "goose-website", project: $project, target: "production", gitSource: {type: "github", org: "abelmcelroy", repo: "Goose-website", ref: "main"}}')
+          answer=$(curl -sS --fail-with-body -X POST "https://api.vercel.com/v13/deployments?teamId=$TEAM&forceNew=1" -H "Authorization: Bearer $VERCEL_TOKEN" -H "Content-Type: application/json" -d "$body") \
+            || { echo "Vercel refused to build the site: $answer. If VERCEL_TOKEN has expired, replace it as Goose-website's README says." >&2; exit 1; }
+          id=$(jq -r .id <<<"$answer")
+          until state=$(curl -sS --fail-with-body "https://api.vercel.com/v13/deployments/$id?teamId=$TEAM" -H "Authorization: Bearer $VERCEL_TOKEN" | jq -r .readyState) && [[ $state =~ ^(READY|ERROR|CANCELED|BLOCKED)$ ]]; do sleep 10; done
+          [ "$state" = READY ] || { echo "Vercel's build of the site ended $state, so the site already live stays as it is: https://vercel.com/abelmcelroys-projects/goose-website/${id#dpl_}" >&2; exit 1; }
+          echo "The site is live from Vercel's build $id."
