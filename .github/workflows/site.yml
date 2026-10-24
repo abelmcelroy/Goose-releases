@@ -1,0 +1,23 @@
+name: Site
+
+on:
+  release:
+    types: [published, unpublished, deleted]
+
+permissions: {}
+
+jobs:
+  site:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions: {contents: read}
+    steps:
+      - if: github.event.action == 'published'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: until gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qx goose-update.json; do sleep 60; done
+      - env:
+          GH_TOKEN: ${{ secrets.SITE_TOKEN }}
+          SITE: ${{ github.repository_owner }}/Goose-website
+        run: gh workflow run site.yml --repo "$SITE"
